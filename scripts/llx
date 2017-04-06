@@ -263,7 +263,7 @@ sub destdin
     {
           if ( /^\$([1-9]\d*)$/ )
           {
-            if ( $line[$1 - 1] )
+            if ( $line[$1 - 1] ne "" )
             {
               push  @command_expansion, $line[$1 - 1];
             }
