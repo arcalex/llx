@@ -201,7 +201,7 @@ while ( 1 )
     {
       $children{$child_pid} = [ time, $rerun_count, [ @command_expansion ] ];
 
-      if ( keys %children > $opts{n} )
+      if ( keys %children >= $opts{n} )
       {
         delete $SIG{CHLD};
 
