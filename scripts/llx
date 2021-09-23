@@ -1,8 +1,7 @@
 #!/usr/bin/perl -wl
 
 
-# Copyright (C) 2008, 2015 Bibliotheca Alexandrina
-# <http://www.bibalex.org/>
+# Copyright (C) 2008, 2015, 2021 Bibliotheca Alexandrina <http://www.bibalex.org/>
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,29 +21,84 @@
 # Youssef Eldakar <youssef.eldakar@bibalex.org>
 #
 
-#
-# I execute 'command' for each line in each 'list', and I try to
-# maintain count 'children' of 'command' running in parallel.  If no
-# 'list' is present, I read standard input instead.  Before executing a
-# 'command', I expand any "index argument" into the field it references
-# in the current line in 'list'.  An index argument is any word in the
-# white-space-delimited 'command' that matches the pattern /\$[0-9]+/.
-# The numeric portion of an index argument is a one-based index into the
-# current white-space-delimited line in 'list'.  If an index argument is
-# out-of-range, I delete it.  I execute 'command' on my own without
-# employing a shell.  Presently, 'command' cannot contain a literal word
-# that matches the pattern of an index argument.  Specify '-d delay' to
-# apply a 'delay'-second pause after each execution of 'command'; and
-# '-v' (verbose) to print each command before executing it.  Specify
-# either '-E code' to rerun 'command' if its exit code does not equal
-# 'code' or '-e code' to rerun 'command' if its exit code equals 'code';
-# and '-t timeout' to send 'command' the termination signal and rerun it
-# following a 'timeout'-second running duration (I interpret a 'timeout'
-# value of 0 as infinity; I default to 0).  Specify '-r reruns' to limit
-# the total number of rerun attempts due to an exit code or timeout
-# condition to 'reruns' (I interpret a 'reruns' value of 0 as infinity;
-# I default to 3).
-#
+=head1 NAME
+
+llx - parallel execution
+
+=head1 SYNOPSIS
+
+B<llx> B<-c> I<command> B<-n> I<children> [I<file>S< >...]
+
+=head1 DESCRIPTION
+
+B<llx> executes I<command> for each line in each I<file> and maintains
+up to count I<children> of I<command> running in parallel.  If no
+I<file> is given, standard input is used instead.
+
+Before executing I<command>, any "index variable" is expanded into the
+field it references in the current whitespace-delimited line in I<file>.
+An index variable is any substring in I<command> that consists of a
+dollar sign immediately followed by a non-zero integer, where the
+integer is a one-based index into the current line in I<file>.  An index
+variable that is out of range is dropped.  The pattern of an index
+variable cannot be escaped at the moment.
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-d> I<delay>
+
+Apply a I<delay>-second pause after each execution of I<command>.
+
+=item B<-E> I<code>
+
+Rerun I<command> if the exit code does not equal I<code>.
+
+=item B<-e> I<code>
+
+Rerun I<command> if the exit code equals I<code>.
+
+=item B<-t> I<timeout>
+
+Send I<command>'process the termination signal and rerun it following a
+I<timeout>-second running duration (0 is for no timeout and is the
+default).
+
+=item B<-s>
+
+Allow execution via the system's command shell if there are shell
+metacharacters in I<command>.
+
+=item B<-r> I<reruns>
+
+Limit the total number of rerun attempts due to an exit code condition
+(see B<-E> and B<-e>) or a timeout condition (see B<-t>) to I<reruns>
+times (0 is for indefinite reruns, and 3 is the default).
+
+=item B<-t> I<timeout>
+
+Send the child process the termination signal and rerun it following a
+I<timeout>-second running duration (0 is for no timeout and is the
+default).
+
+=item B<-v>
+
+Turn on verbose mode.  In verbose mode, print each command before
+executing it followed by a space, hashmark, space, then the rerun count
+(i.e., 0 for the initial run), and print the command again after the run
+followed by a space, a colon, a space, then the exit code.  Each line of
+verbose output has a leading date and time and is written to standard
+error.
+
+=back
+
+=head1 AUTHORS
+
+B<llx> is copyright (C) 2008, 2015, 2021 Bibliotheca Alexandrina,
+written by Youssef Eldakar <youssef.eldakar@bibalex.org>.
+
+=cut
 
 use strict;
 
@@ -58,7 +112,7 @@ $SIG{CHLD} = \&REAP;
 
 my %opts;
 
-getopts ( "c:d:E:e:n:r:t:v", \%opts )
+getopts ( "c:d:E:e:n:r:st:v", \%opts )
   && defined $opts{c} && ! ( defined $opts{E} && defined $opts{e} )
   && defined $opts{n} || help () && exit;
 
@@ -113,8 +167,16 @@ while ( 1 )
             print scalar localtime time, @command_expansion, "#", $rerun_count;
           }
 
-          # Avoid shell interpretation. (See Perl manual.)
-          exec { $command_expansion[0] } @command_expansion;
+          unless ( defined $opts{s} )
+          {
+            # Force execution using execvp(3).
+            exec { $command_expansion[0] } @command_expansion;
+          }
+          else
+          {
+            # Use shell if there are shell metacharacters.
+            exec join " ", @command_expansion;
+          }
         }
         else
         {
@@ -228,7 +290,7 @@ while ( 1 )
 sub help
 {
   print basename $0 . " " .
-    "-c command [-d delay] [-E|-e code] -n children [-r reruns] [-t timeout] [-v]";
+    "-c command [-d delay] [-E|-e code] -n children [-r reruns] [-s] [-t timeout] [-v]";
 }
 
 sub more
@@ -261,16 +323,15 @@ sub destdin
 
     foreach ( @command )
     {
-          if ( /^\$([1-9]\d*)$/ )
+          if ( /\$([1-9]\d*)/ )
           {
             if ( $line[$1 - 1] ne "" )
             {
-              push  @command_expansion, $line[$1 - 1];
+              my $tok = $_;
+              $tok =~ s/\$([1-9]\d*)/$line[$1 - 1]/;
+
+              push  @command_expansion, $tok;
             }
-          }
-       elsif ( /^\$0$/ )
-          {
-              push  @command_expansion, $_ foreach @line;
           }
        else
           {
